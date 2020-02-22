@@ -1,96 +1,115 @@
-#!/usr/bin/env python
-
+#!/usr/bin/env python3
+import pdb
 import sys
 import os
 import argparse
 import z3
-import regex
 import pickle
-import random
-import subprocess
-import kmaxtools.about
+
+import settings
+import vcommon as CM
+
+DBG = pdb.set_trace
+
+mlog = CM.getLogger(__name__, settings.logger_level)
+
 
 def info(msg, ending="\n"):
-  sys.stderr.write("INFO: %s%s" % (msg, ending))
+    sys.stderr.write("INFO: %s%s" % (msg, ending))
+
 
 def warning(msg, ending="\n"):
-  sys.stderr.write("WARNING: %s%s" % (msg, ending))
+    sys.stderr.write("WARNING: %s%s" % (msg, ending))
+
 
 def error(msg, ending="\n"):
-  sys.stderr.write("ERROR: %s%s" % (msg, ending))
+    sys.stderr.write("ERROR: %s%s" % (msg, ending))
+
 
 def get_kmax_constraints(kmax_formulas, kbuild_path, view=False):
-  if kbuild_path in kmax_formulas.keys():
-    kmax_constraints = []
-    # add the condition for the compilation unit and each of its parent directories
-    comp_unit_constraint = z3.parse_smt2_string(kmax_formulas[kbuild_path])
-    kmax_constraints.extend(comp_unit_constraint)
-    if view:
-      print("%s\n%s\n" % (kbuild_path, comp_unit_constraint))
-    if '/' in kbuild_path:
-      subpath, basename = kbuild_path.rsplit('/', 1)
-      elems = subpath.rsplit('/')
-      for i in range(0, len(elems)):
-        subarray = elems[0:(len(elems) - i)]
-        subsubpath = '/'.join(subarray) + "/"
-        if subsubpath in kmax_formulas.keys():
-          subsubpath_constraint = z3.parse_smt2_string(kmax_formulas[subsubpath])
-          kmax_constraints.extend(subsubpath_constraint)
-          if view:
-            print("%s\n%s\n" % (subsubpath, subsubpath_constraint))
-        else:
-          info("%s has no kmax formula, assuming it is unconstrained." % (subsubpath))
-    return kmax_constraints
-  else:
-    return None
+    if kbuild_path in kmax_formulas.keys():
+        kmax_constraints = []
+        # add the condition for the compilation unit and each of its parent directories
+        comp_unit_constraint = z3.parse_smt2_string(kmax_formulas[kbuild_path])
+        kmax_constraints.extend(comp_unit_constraint)
+        if view:
+            print("%s\n%s\n" % (kbuild_path, comp_unit_constraint))
+        if '/' in kbuild_path:
+            subpath, basename = kbuild_path.rsplit('/', 1)
+            elems = subpath.rsplit('/')
+            for i in range(0, len(elems)):
+                subarray = elems[0:(len(elems) - i)]
+                subsubpath = '/'.join(subarray) + "/"
+                if subsubpath in kmax_formulas.keys():
+                    subsubpath_constraint = z3.parse_smt2_string(
+                        kmax_formulas[subsubpath])
+                    kmax_constraints.extend(subsubpath_constraint)
+                    if view:
+                        print("%s\n%s\n" % (subsubpath, subsubpath_constraint))
+                else:
+                    info("%s has no kmax formula, assuming it is unconstrained." % (
+                        subsubpath))
+        return kmax_constraints
+    else:
+        return None
+
 
 def unpickle_kmax_file(kmax_file):
-  with open(kmax_file, 'r') as fp:
-    kmax = pickle.load(fp)
-    return kmax
+    with open(kmax_file, 'rb') as fp:
+        kmax = pickle.load(fp)
+        return kmax
 
-if __name__ == '__main__':    
-  argparser = argparse.ArgumentParser()
-  argparser.add_argument('--formulas',
-                         type=str,
-                         default=".kmax/",
-                         help="""Path to the formulas which contain one kmax file for all compilation units and one directory for each architecture containing kclause files.  Defaults to \".kmax/\"""")
-  argparser.add_argument('--kmax-formulas',
-                         type=str,
-                         default=None,
-                         help="""The file containing the Kbuild constraints as a pickled dictionary from compilation unit to formula.  Defaults to \"kmax\" in the --formulas directory.""")
-  argparser.add_argument('--kclause-formulas',
-                         type=str,
-                         default=None,
-                         help="""The file containing the a pickled tuple with a mapping from configuration option to its formulas and a list of additional constraints.  This overrides --arch.""")
-  argparser.add_argument('--kconfig-extract',
-                         type=str,
-                         default=None,
-                         help="""The file containing the kconfig extract.  This must be accompanied by --kclause-formulas.""")
-  argparser.add_argument('--version',
-                         action="store_true",
-                         help="""Print the version number.""")
-  argparser.add_argument("pathprefix",
-                         help="The path prefix of the compilation units to retrieve kmax formulas from.")
-  args = argparser.parse_args()
 
-  if args.version:
-    print("%s %s" % (kmaxtools.about.__title__, kmaxtools.about.__version__))
-    exit(0)
-  
-  formulas = args.formulas
-  kmax_file = args.kmax_formulas
-  path_prefix = args.pathprefix
+if __name__ == '__main__':
+    argparser = argparse.ArgumentParser()
+    # 0 Error #1 Warn #2 Info #3 Debug #4 Detail
+    ag = argparser.add_argument
 
-  if not kmax_file:
-    kmax_file = os.path.join(formulas, "kmax")
-  info("Kmax formula file: %s" % (kmax_file))
-  
-  kmax_formulas = unpickle_kmax_file(kmax_file)
+    ag("--log_level", "-log_level",
+       type=int,
+       choices=range(5),
+       default=2,
+       help="set logger info")
 
-  filtered_formulas = {}
-  for unit in kmax_formulas.keys():
-     if unit.startswith(path_prefix):
-        filtered_formulas[unit] = get_kmax_constraints(kmax_formulas, unit, view=True)  # turn this to false to not print them out
-  print(filtered_formulas)  # remove to avoid printing the whole map
-  
+    ag('--formulas',
+       type=str,
+       default=".kmax/",
+       help="""Path to the formulas which contain one kmax file for all compilation units and one directory for each architecture containing kclause files.  Defaults to \".kmax/\"""")
+    ag('--kmax-formulas',
+       type=str,
+       default=None,
+       help="""The file containing the Kbuild constraints as a pickled dictionary from compilation unit to formula.  Defaults to \"kmax\" in the --formulas directory.""")
+    ag('--kclause-formulas',
+       type=str,
+       default=None,
+       help="""The file containing the a pickled tuple with a mapping from configuration option to its formulas and a list of additional constraints.  This overrides --arch.""")
+    ag('--kconfig-extract',
+       type=str,
+       default=None,
+       help="""The file containing the kconfig extract.  This must be accompanied by --kclause-formulas.""")
+    ag('--version',
+       action="store_true",
+       help="""Print the version number.""")
+    ag("pathprefix",
+       help="The path prefix of the compilation units to retrieve kmax formulas from.")
+    args = argparser.parse_args()
+
+    if 0 <= args.log_level <= 4 and args.log_level != settings.logger_level:
+        settings.logger_level = args.log_level
+
+    formulas = args.formulas
+    kmax_file = args.kmax_formulas
+    path_prefix = args.pathprefix
+
+    if not kmax_file:
+        kmax_file = os.path.join(formulas, "kmax")
+    info("Kmax formula file: %s" % (kmax_file))
+
+    kmax_formulas = unpickle_kmax_file(kmax_file)
+
+    filtered_formulas = {}
+    for unit in kmax_formulas.keys():
+        if unit.startswith(path_prefix):
+            filtered_formulas[unit] = get_kmax_constraints(
+                kmax_formulas, unit, view=True)  # turn this to false to not print them out
+    print(filtered_formulas)  # remove to avoid printing the whole map
