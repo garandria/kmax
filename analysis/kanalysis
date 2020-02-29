@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import pdb
 from pathlib import Path
-import os
 import argparse
 import z3
 import pickle
@@ -15,38 +14,139 @@ DBG = pdb.set_trace
 mlog = CM.getLogger(__name__, settings.logger_level)
 
 
-def get_conditions(kmax_formulas, kbuild_path):
-    if kbuild_path in kmax_formulas:
-        conditions = []
-        # add the condition for the compilation unit and each of its parent directories
-        unit_constraint = z3.parse_smt2_string(kmax_formulas[kbuild_path])
-        conditions.extend(unit_constraint)
-        mlog.debug("{} => {}".format(kbuild_path, unit_constraint))
+class Z3:
 
-        if '/' in kbuild_path:
-            subpath, basename = kbuild_path.rsplit('/', 1)
-            elems = subpath.rsplit('/')
-            for i in range(0, len(elems)):
-                subarray = elems[0:(len(elems) - i)]
-                subsubpath = '/'.join(subarray) + "/"
-                if subsubpath in kmax_formulas.keys():
-                    subsubpath_constraint = z3.parse_smt2_string(
-                        kmax_formulas[subsubpath])
-                    conditions.extend(subsubpath_constraint)
-                    mlog.debug("%s\n%s\n" %
-                               (subsubpath, subsubpath_constraint))
-                else:
-                    mlog.info("%s has no kmax formula, assuming it is unconstrained." % (
-                        subsubpath))
-        return conditions
-    else:
-        return None
+    CONNECTIVE_OPS = [z3.Z3_OP_NOT, z3. Z3_OP_AND,
+                      z3. Z3_OP_OR, z3.Z3_OP_IMPLIES,
+                      z3.Z3_OP_IFF, z3.Z3_OP_ITE, z3.Z3_OP_XOR]
+
+    @classmethod
+    def simplify(cls, f):
+        assert z3.is_expr(f), f
+        simpl = z3.Tactic('ctx-solver-simplify')
+        simpl = z3.TryFor(simpl, settings.SOLVER_TIMEOUT)
+        try:
+            f = simpl(f).as_expr()
+        except z3.Z3Exception:
+            pass
+        return f
+
+    @classmethod
+    def traverse(cls, expr, f):
+        f(expr)
+        for c in expr.children():
+            cls.traverse(c, f)
+
+    @classmethod
+    def collect(cls, expr, f):
+        assert z3.is_expr(expr), expr
+
+        results = []
+
+        def f_(e):
+            return f(e, results)
+
+        cls.traverse(expr, f_)
+
+        return results
+
+    @classmethod
+    def collect_connective_ops(cls, e):
+        def f(e, results):
+            if e.decl().kind() in cls.CONNECTIVE_OPS:
+                results.append(e.decl())
+
+        return set(cls.collect(e, f))
+
+    @classmethod
+    def collect_vars(cls, e):
+        def f(e, results):
+            if z3.is_const(e) and e.decl().kind() == z3.Z3_OP_UNINTERPRETED:
+                results.append(e.decl())
+
+        return set(cls.collect(e, f))
 
 
-def unpickle_kmax_file(kmax_file):
-    with open(kmax_file, 'rb') as fp:
-        kmax = pickle.load(fp)
-        return kmax
+class DB(dict):
+    @classmethod
+    def load(cls, kmax_file):
+        assert kmax_file.is_dir() or kmax_file.is_file(), kmax_file
+
+        if kmax_file.is_dir():
+            kmax_file = kmax_file / 'kmax'
+
+        if not kmax_file.is_file():
+            mlog.error("{} does not exist!".format(kmax_file))
+            exit(1)
+
+        with open(kmax_file, 'rb') as fp:
+            kmax = pickle.load(fp)
+            return kmax
+
+    @classmethod
+    def create_from_file(cls, kmax_file):
+        d = cls.load(kmax_file)
+
+        db = cls()
+        for compile_unit in d:
+            constraint = d[compile_unit]
+            constraint = z3.parse_smt2_string(constraint)
+            assert isinstance(constraint, z3.z3.AstVector), constraint
+            assert len(constraint) <= 1, constraint
+            if len(constraint) == 0:
+                constraint = None
+            else:
+                assert len(constraint) == 1, constraint
+                constraint = Z3.simplify(constraint[0])
+            db[compile_unit] = constraint
+
+        return db
+
+
+class Analysis:
+    def __init__(self, db):
+        assert isinstance(db, DB), db
+        self.db = db
+
+    def get_constraint_forms(self):
+        """
+        Return the number of conj, disj, or mixed
+        TODO: model counting?
+        """
+        for constraint in db.values():
+            if constraint is not None:
+                print(constraint)
+                print(Z3.collect_connective_ops(constraint))
+                print(Z3.collect_vars(constraint))
+
+
+# def get_conditions(kmax_formulas, kbuild_path):
+#     DBG()
+#     if kbuild_path in kmax_formulas:
+#         conditions = []
+#         # add the condition for the compilation unit and each of its parent directories
+#         unit_constraint = z3.parse_smt2_string(kmax_formulas[kbuild_path])
+#         conditions.extend(unit_constraint)
+#         mlog.debug("{} => {}".format(kbuild_path, unit_constraint))
+
+#         if '/' in kbuild_path:
+#             subpath, basename = kbuild_path.rsplit('/', 1)
+#             elems = subpath.rsplit('/')
+#             for i in range(0, len(elems)):
+#                 subarray = elems[0:(len(elems) - i)]
+#                 subsubpath = '/'.join(subarray) + "/"
+#                 if subsubpath in kmax_formulas.keys():
+#                     subsubpath_constraint = z3.parse_smt2_string(
+#                         kmax_formulas[subsubpath])
+#                     conditions.extend(subsubpath_constraint)
+#                     mlog.debug("%s\n%s\n" %
+#                                (subsubpath, subsubpath_constraint))
+#                 else:
+#                     mlog.info("%s has no kmax formula, assuming it is unconstrained." % (
+#                         subsubpath))
+#         return conditions
+#     else:
+#         return None
 
 
 if __name__ == '__main__':
@@ -74,7 +174,7 @@ if __name__ == '__main__':
     #    help="""The file containing the Kbuild constraints as a pickled dictionary from compilation unit to formula.  Defaults to \"kmax\" in the --formulas directory.""")
     ag("--pathprefix",
        type=str,
-       help="The path prefix of the compilation units to retrieve kmax formulas from.")
+       help="retrieve kmax formulas for this path prefix")
     args = argparser.parse_args()
 
     if 0 <= args.log_level <= 4 and args.log_level != settings.logger_level:
@@ -82,18 +182,13 @@ if __name__ == '__main__':
 
     kmax_file = Path(args.inp)
 
-    if kmax_file.is_dir():
-        kmax_file = kmax_file / 'kmax'
+    db = DB.create_from_file(kmax_file)
+    analysis = Analysis(db)
+    analysis.get_constraint_forms()
 
-    if not kmax_file.is_file():
-        mlog.error("{} does not exist!".format(kmax_file))
-        exit(1)
-
-    mlog.info("Kmax formula file: {}".format(kmax_file))
-    kmax_formulas = unpickle_kmax_file(kmax_file)
-    formulas = {unit: get_conditions(
-        kmax_formulas, unit) for unit in kmax_formulas}
-    path_prefix = args.pathprefix
-    print(path_prefix)
-    filtered_formulas = {}
-    print(formulas)  # remove to avoid printing the whole map
+    # formulas = {unit: get_conditions(
+    #     kmax_formulas, unit) for unit in kmax_formulas}
+    # path_prefix = args.pathprefix
+    # print(path_prefix)
+    # filtered_formulas = {}
+    # print(formulas)  # remove to avoid printing the whole map
