@@ -1,0 +1,30 @@
+tnguyen
+
+
+Table of Contents
+_________________
+
+1 To run the script
+
+
+ subject       nconfigs  ncompileunits  cond types (conj,disj,mixed)  cond len (top, avg) 
+------------------------------------------------------------------------------------------
+ paper_fse            2              2  2/0/0                         2, 2                
+ busybox_1_28       499            456  345/110/1                     35, 1.7             
+ linux_5_4_4      12980          27807  27135/481/191                 74, 1.16            
+
+
+1 To run the script
+===================
+
+  ,----
+  | $ ./kanalysis ../../kmax_experiments/formulas/busybox_1_28_0/kmax 
+  | ...
+  | __main__:INFO:499 config vars, 456 compile units
+  | __main__:INFO:cond lens: top 35, avg 1.706140350877193
+  | __main__:INFO:conj 345, disj 110, mixed 1
+  | 
+  | $ ./kanalysis ../../kmax_experiments/formulas/linux_5_4_4/kmax
+  | ...
+  | 
+  `----

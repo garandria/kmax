@@ -32,42 +32,55 @@ class Z3:
         return f
 
     @classmethod
+    def is_connective_op(cls, e):
+        return e.decl().kind() in cls.CONNECTIVE_OPS
+
+    @classmethod
+    def is_var(cls, e):
+        return z3.is_const(e) and e.decl().kind() == z3.Z3_OP_UNINTERPRETED
+
+    @classmethod
+    def is_purely(cls, e, op):
+        if cls.is_var(e):
+            return True
+        elif e.decl().kind() == op:
+            return all(cls.is_purely(c, op) for c in e.children())
+        elif e.decl().kind() == z3.Z3_OP_NOT:
+            return len(e.children()) == 1 and cls.is_var(e.children()[0])
+        else:
+            return False
+
+    @classmethod
+    def is_purely_conj(cls, e):
+        return cls.is_purely(e, z3.Z3_OP_AND)
+
+    @classmethod
+    def is_purely_disj(cls, e):
+        return cls.is_purely(e, z3.Z3_OP_OR)
+
+    @classmethod
     def traverse(cls, expr, f):
         f(expr)
         for c in expr.children():
             cls.traverse(c, f)
 
     @classmethod
-    def collect(cls, expr, f):
-        assert z3.is_expr(expr), expr
+    def collect(cls, e, check):
+        def f(e, results):
+            if check(e):
+                results.append(e.decl())
 
         results = []
 
-        def f_(e):
-            return f(e, results)
+        def f_(e_):
+            return f(e_, results)
 
-        cls.traverse(expr, f_)
-
+        cls.traverse(e, f_)
         return results
-
-    @classmethod
-    def collect_connective_ops(cls, e):
-        def f(e, results):
-            if e.decl().kind() in cls.CONNECTIVE_OPS:
-                results.append(e.decl())
-
-        return set(cls.collect(e, f))
-
-    @classmethod
-    def collect_vars(cls, e):
-        def f(e, results):
-            if z3.is_const(e) and e.decl().kind() == z3.Z3_OP_UNINTERPRETED:
-                results.append(e.decl())
-
-        return set(cls.collect(e, f))
 
 
 class DB(dict):
+
     @classmethod
     def load(cls, kmax_file):
         assert kmax_file.is_dir() or kmax_file.is_file(), kmax_file
@@ -113,12 +126,46 @@ class Analysis:
         Return the number of conj, disj, or mixed
         TODO: model counting?
         """
-        for constraint in db.values():
-            if constraint is not None:
-                print(constraint)
-                print(Z3.collect_connective_ops(constraint))
-                print(Z3.collect_vars(constraint))
+        constraints = [constraint for constraint in db.values()
+                       if constraint is not None]
 
+        config_vars = []
+        n_pure_conj = 0
+        n_pure_disj = 0
+        n_mixed = 0
+        for constraint in constraints:
+            cvars = Z3.collect(constraint, Z3.is_var)
+            config_vars.append(set(cvars))
+            connective_ops = Z3.collect(constraint, Z3.is_connective_op)
+            print(constraint)
+            print(connective_ops)
+            if Z3.is_purely_conj(constraint):
+                print("conj")
+                n_pure_conj += 1
+            elif Z3.is_purely_disj(constraint):
+                print("disj")
+                n_pure_disj += 1
+            else:
+                print("mixed")
+                n_mixed += 1
+
+        n_config_vars = len(set(v for cvars in config_vars for v in cvars))
+
+        total_len = 0
+        longest_len = 0
+        for cvars in config_vars:
+            len_ = len(cvars)
+            total_len += len_
+            if len_ > longest_len:
+                longest_len = len_
+
+        avg_len = total_len / len(config_vars)
+
+        mlog.info("{} config vars, {} compile units".format(
+            n_config_vars, len(constraints)))
+        mlog.info("cond lens: top {}, avg {}".format(longest_len, avg_len))
+        mlog.info("conj {}, disj {}, mixed {}".format(
+            n_pure_conj, n_pure_disj, n_mixed))
 
 # def get_conditions(kmax_formulas, kbuild_path):
 #     DBG()
