@@ -4,7 +4,7 @@ from pathlib import Path
 import argparse
 import z3
 import pickle
-
+import time
 
 import settings
 import vcommon as CM
@@ -68,7 +68,7 @@ class Z3:
     def collect(cls, e, check):
         def f(e, results):
             if check(e):
-                results.append(e.decl())
+                results.append(e)
 
         results = []
 
@@ -79,7 +79,22 @@ class Z3:
         return results
 
 
-class DB(dict):
+class ConstraintInfo:
+    TRUE = "no constraint"
+    CONJ = "conj"
+    DISJ = "disj"
+    MIXED = "mix"
+
+    def __init__(self):
+        self.typ = None
+        self.files = set()
+        self.config_vars = set()
+
+
+class DB:
+    def __init__(self):
+        self.files_d = {}  # file -> constraint
+        self.constraints_d = {}  # constraint -> {files}
 
     @classmethod
     def load(cls, kmax_file):
@@ -101,8 +116,8 @@ class DB(dict):
         d = cls.load(kmax_file)
 
         db = cls()
-        for compile_unit in d:
-            constraint = d[compile_unit]
+        for compile_file in d:
+            constraint = d[compile_file]
             constraint = z3.parse_smt2_string(constraint)
             assert isinstance(constraint, z3.z3.AstVector), constraint
             assert len(constraint) <= 1, constraint
@@ -111,8 +126,11 @@ class DB(dict):
             else:
                 assert len(constraint) == 1, constraint
                 constraint = Z3.simplify(constraint[0])
-            db[compile_unit] = constraint
 
+            db.files_d[compile_file] = constraint
+            if constraint not in db.constraints_d:
+                db.constraints_d[constraint] = ConstraintInfo()
+            db.constraints_d[constraint].files.add(compile_file)
         return db
 
 
@@ -120,80 +138,112 @@ class Analysis:
     def __init__(self, db):
         assert isinstance(db, DB), db
         self.db = db
+        self.compute()
 
-    def get_constraint_forms(self):
-        """
-        Return the number of conj, disj, or mixed
-        TODO: model counting?
-        """
-        constraints = [constraint for constraint in db.values()
-                       if constraint is not None]
+    def compute(self):
+        for constraint, c_info in db.constraints_d.items():
 
-        config_vars = []
-        n_pure_conj = 0
-        n_pure_disj = 0
-        n_mixed = 0
-        for constraint in constraints:
-            cvars = Z3.collect(constraint, Z3.is_var)
-            config_vars.append(set(cvars))
-            connective_ops = Z3.collect(constraint, Z3.is_connective_op)
-            print(constraint)
-            print(connective_ops)
-            if Z3.is_purely_conj(constraint):
-                print("conj")
-                n_pure_conj += 1
+            # determine config variables in constraint
+
+            c_info.config_vars = (set() if constraint is None else
+                                  set(Z3.collect(constraint, Z3.is_var)))
+
+            # determine constraint type
+            if constraint is None:
+                c_info.typ = ConstraintInfo.TRUE
+            elif Z3.is_purely_conj(constraint):
+                c_info.typ = ConstraintInfo.CONJ
             elif Z3.is_purely_disj(constraint):
-                print("disj")
-                n_pure_disj += 1
+                c_info.typ = ConstraintInfo.DISJ
             else:
-                print("mixed")
-                n_mixed += 1
+                c_info.type = ConstraintInfo.MIXED
 
-        n_config_vars = len(set(v for cvars in config_vars for v in cvars))
+    def get_influential(self):
+        st = time.time()
+        influential_d = {}
+        for constraint in self.db.constraints_d:
+            if constraint is None:  # no constraint, i.e., True
+                continue  # no influential
+            for cv in self.db.constraints_d[constraint].config_vars:
+                if cv not in influential_d:
+                    influential_d[cv] = set()
+                for f in self.db.constraints_d[constraint].files:
+                    influential_d[cv].add(f)
 
+        print('hi 1', time.time() - st)
+        influential_vars = sorted(
+            influential_d.keys(), key=lambda x: len(influential_d[x]),
+            reverse=True)
+
+        print('\n'.join("{}: {}".format(
+            v, len(influential_d[v])) for v in influential_vars[:10]))
+
+        # for tv in tvs:
+        #     files = set()
+
+        #
+        #         else:
+        #             myconstraint = z3.And(cv == tv, constraint)
+        #             solver.add(myconstraint)
+        #             stat = solver.check()
+        #             solver.reset()
+        #             # print(myconstraint)
+        #             if stat == z3.sat:
+        #                 for f in self.db.constraints_d[constraint].files:
+        #                     files.add(f)
+        #             else:
+        #                 print('UNSAT', myconstraint)
+
+        # assert tv not in influential_d[cv]
+        # influential_d[cv][tv] = files
+
+    def get_stats(self):
+        config_vars = set()
+        n_true = 0
+        n_conj = 0
+        n_disj = 0
+        n_mixed = 0
+
+        longest_conj = 0
+        longest_disj = 0
+        longest_mixed = 0
+        longest_total = 0
         total_len = 0
-        longest_len = 0
-        for cvars in config_vars:
-            len_ = len(cvars)
+        for c_info in db.constraints_d.values():
+            for cv in c_info.config_vars:
+                config_vars.add(cv)
+
+            len_ = len(c_info.config_vars)
             total_len += len_
-            if len_ > longest_len:
-                longest_len = len_
+            if len_ > longest_total:
+                longest_total = len_
 
-        avg_len = total_len / len(config_vars)
+            if c_info.typ == ConstraintInfo.TRUE:
+                n_true += 1
+            elif c_info.typ == ConstraintInfo.CONJ:
+                n_conj += 1
+                if len_ > longest_conj:
+                    longest_conj = len_
+            elif c_info.typ == ConstraintInfo.DISJ:
+                n_disj += 1
+                if len_ > longest_disj:
+                    longest_disj = len_
+            else:
+                n_mixed += 1
+                if len_ > longest_mixed:
+                    longest_mixed = len_
 
-        mlog.info("{} config vars, {} compile units".format(
-            n_config_vars, len(constraints)))
-        mlog.info("cond lens: top {}, avg {}".format(longest_len, avg_len))
-        mlog.info("conj {}, disj {}, mixed {}".format(
-            n_pure_conj, n_pure_disj, n_mixed))
+        avg_len = total_len / len(db.constraints_d)
 
-# def get_conditions(kmax_formulas, kbuild_path):
-#     DBG()
-#     if kbuild_path in kmax_formulas:
-#         conditions = []
-#         # add the condition for the compilation unit and each of its parent directories
-#         unit_constraint = z3.parse_smt2_string(kmax_formulas[kbuild_path])
-#         conditions.extend(unit_constraint)
-#         mlog.debug("{} => {}".format(kbuild_path, unit_constraint))
-
-#         if '/' in kbuild_path:
-#             subpath, basename = kbuild_path.rsplit('/', 1)
-#             elems = subpath.rsplit('/')
-#             for i in range(0, len(elems)):
-#                 subarray = elems[0:(len(elems) - i)]
-#                 subsubpath = '/'.join(subarray) + "/"
-#                 if subsubpath in kmax_formulas.keys():
-#                     subsubpath_constraint = z3.parse_smt2_string(
-#                         kmax_formulas[subsubpath])
-#                     conditions.extend(subsubpath_constraint)
-#                     mlog.debug("%s\n%s\n" %
-#                                (subsubpath, subsubpath_constraint))
-#                 else:
-#                     mlog.info("%s has no kmax formula, assuming it is unconstrained." % (
-#                         subsubpath))
-#         return conditions
-#     else:
-#         return None
+        mlog.info("{} config vars, {} constraints, {} compile units".format(
+            len(config_vars), len(db.constraints_d), len(db.files_d)))
+        mlog.info("true {}, conj {}, disj {}, mixed {}".format(
+            n_true, n_conj, n_disj, n_mixed))
+        mlog.info("cond lens: top {} (conj {}, disj {}, mixed {}), avg {}".format(
+            longest_total, longest_conj, longest_disj, longest_mixed, avg_len))
+        mlog.info("# of files with no constraint: {}".format(
+            len(db.constraints_d[None].files)))
+        self.config_vars = config_vars
 
 
 if __name__ == '__main__':
@@ -231,11 +281,40 @@ if __name__ == '__main__':
 
     db = DB.create_from_file(kmax_file)
     analysis = Analysis(db)
-    analysis.get_constraint_forms()
-
+    analysis.get_stats()
+    analysis.get_influential()
     # formulas = {unit: get_conditions(
     #     kmax_formulas, unit) for unit in kmax_formulas}
     # path_prefix = args.pathprefix
     # print(path_prefix)
     # filtered_formulas = {}
     # print(formulas)  # remove to avoid printing the whole map
+
+
+# def get_conditions(kmax_formulas, kbuild_path):
+#     DBG()
+#     if kbuild_path in kmax_formulas:
+#         conditions = []
+#         # add the condition for the compilation unit and each of its parent directories
+#         unit_constraint = z3.parse_smt2_string(kmax_formulas[kbuild_path])
+#         conditions.extend(unit_constraint)
+#         mlog.debug("{} => {}".format(kbuild_path, unit_constraint))
+
+#         if '/' in kbuild_path:
+#             subpath, basename = kbuild_path.rsplit('/', 1)
+#             elems = subpath.rsplit('/')
+#             for i in range(0, len(elems)):
+#                 subarray = elems[0:(len(elems) - i)]
+#                 subsubpath = '/'.join(subarray) + "/"
+#                 if subsubpath in kmax_formulas.keys():
+#                     subsubpath_constraint = z3.parse_smt2_string(
+#                         kmax_formulas[subsubpath])
+#                     conditions.extend(subsubpath_constraint)
+#                     mlog.debug("%s\n%s\n" %
+#                                (subsubpath, subsubpath_constraint))
+#                 else:
+#                     mlog.info("%s has no kmax formula, assuming it is unconstrained." % (
+#                         subsubpath))
+#         return conditions
+#     else:
+#         return None
