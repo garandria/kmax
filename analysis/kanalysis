@@ -159,7 +159,7 @@ class Analysis:
                 c_info.type = ConstraintInfo.MIXED
 
     def get_influential(self):
-        st = time.time()
+        #st = time.time()
         influential_d = {}
         for constraint in self.db.constraints_d:
             if constraint is None:  # no constraint, i.e., True
@@ -170,7 +170,6 @@ class Analysis:
                 for f in self.db.constraints_d[constraint].files:
                     influential_d[cv].add(f)
 
-        print('hi 1', time.time() - st)
         influential_vars = sorted(
             influential_d.keys(), key=lambda x: len(influential_d[x]),
             reverse=True)
