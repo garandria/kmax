@@ -80,7 +80,7 @@ class Z3:
 
 
 class ConstraintInfo:
-    TRUE = "no constraint"
+    TRUE = "true"
     CONJ = "conj"
     DISJ = "disj"
     MIXED = "mix"
@@ -92,7 +92,8 @@ class ConstraintInfo:
 
 
 class DB:
-    def __init__(self):
+    def __init__(self, filename):
+        self.filename = filename
         self.files_d = {}  # file -> constraint
         self.constraints_d = {}  # constraint -> {files}
 
@@ -115,7 +116,7 @@ class DB:
     def create_from_file(cls, kmax_file):
         d = cls.load(kmax_file)
 
-        db = cls()
+        db = cls(kmax_file)
         for compile_file in d:
             constraint = d[compile_file]
             constraint = z3.parse_smt2_string(constraint)
@@ -129,8 +130,24 @@ class DB:
 
             db.files_d[compile_file] = constraint
             if constraint not in db.constraints_d:
-                db.constraints_d[constraint] = ConstraintInfo()
+                c_info = ConstraintInfo()
+                c_info.config_vars = (set() if constraint is None else
+                                      set(Z3.collect(constraint, Z3.is_var)))
+
+                # determine constraint type
+                if constraint is None:
+                    c_info.typ = ConstraintInfo.TRUE
+                elif Z3.is_purely_conj(constraint):
+                    c_info.typ = ConstraintInfo.CONJ
+                elif Z3.is_purely_disj(constraint):
+                    c_info.typ = ConstraintInfo.DISJ
+                else:
+                    c_info.typ = ConstraintInfo.MIXED
+
+                db.constraints_d[constraint] = c_info
+
             db.constraints_d[constraint].files.add(compile_file)
+
         return db
 
 
@@ -138,28 +155,61 @@ class Analysis:
     def __init__(self, db):
         assert isinstance(db, DB), db
         self.db = db
-        self.compute()
 
-    def compute(self):
-        for constraint, c_info in db.constraints_d.items():
+    def doit(self):
+        mlog.info("kmax file:'{}'".format(self.db.filename))
+        mlog.info("compile files: {}".format(len(self.db.files_d)))
+        mlog.info("# of files with no constraint: {}".format(
+            len(self.db.constraints_d[None].files)))
 
-            # determine config variables in constraint
+        self.compute_config_vars()
+        mlog.info("config vars: {}".format(len(self.config_vars)))
 
-            c_info.config_vars = (set() if constraint is None else
-                                  set(Z3.collect(constraint, Z3.is_var)))
+        mlog.info("constraints: {}".format(len(self.db.constraints_d)))
+        self.compute_typs_lens()
+        mlog.info("constraint typs: {}".format(', '.join("{} {}".format(
+            typ, self.typs_d[typ]) for typ in sorted(self.typs_d))))
+        ss = (', '.join("{} {}".format(
+            typ, self.largest_lens_d[typ]) for typ in sorted(self.largest_lens_d)))
+        mlog.info("constraint lens: avg {}, {}".format(self.avg_len, ss))
 
-            # determine constraint type
-            if constraint is None:
-                c_info.typ = ConstraintInfo.TRUE
-            elif Z3.is_purely_conj(constraint):
-                c_info.typ = ConstraintInfo.CONJ
-            elif Z3.is_purely_disj(constraint):
-                c_info.typ = ConstraintInfo.DISJ
+        self.get_len_cov()
+        ss = (', '.join("{} {}".format(
+            k, len(self.lens_covs_d[k])) for k in sorted(self.lens_covs_d)))
+        mlog.info("constraint lens => # files: {}".format(ss))
+        # TODO:  output/mlog.debug the names of the files
+
+    def compute_config_vars(self):
+        config_vars = set()
+        for c_info in self.db.constraints_d.values():
+            config_vars = config_vars.union(c_info.config_vars)
+
+        self.config_vars = config_vars
+
+    def compute_typs_lens(self):
+        typs_d = {}
+        largest_lens_d = {}
+
+        total_len = 0
+        for c_info in self.db.constraints_d.values():
+            len_ = len(c_info.config_vars)
+            total_len += len_
+
+            if c_info.typ not in typs_d:
+                typs_d[c_info.typ] = 0
+            typs_d[c_info.typ] += 1
+
+            if c_info.typ not in largest_lens_d:
+                largest_lens_d[c_info.typ] = len_
             else:
-                c_info.type = ConstraintInfo.MIXED
+                if len_ > largest_lens_d[c_info.typ]:
+                    largest_lens_d[c_info.typ] = len_
 
-    def get_influential(self):
-        #st = time.time()
+        self.avg_len = total_len / len(self.db.constraints_d)
+        self.typs_d = typs_d
+        self.largest_lens_d = largest_lens_d
+
+    def get_influential_configs(self):
         influential_d = {}
         for constraint in self.db.constraints_d:
             if constraint is None:  # no constraint, i.e., True
@@ -177,72 +227,19 @@ class Analysis:
         print('\n'.join("{}: {}".format(
             v, len(influential_d[v])) for v in influential_vars[:10]))
 
-        # for tv in tvs:
-        #     files = set()
+    def get_len_cov(self):
+        """
+        Return a mapping from condition len to # of files covered by
+        conditions of that length
+        """
+        lens_covs_d = {}
+        for c_info in self.db.constraints_d.values():
+            k = len(c_info.config_vars)
+            if k not in lens_covs_d:
+                lens_covs_d[k] = set()
+            lens_covs_d[k] = lens_covs_d[k].union(c_info.files)
 
-        #
-        #         else:
-        #             myconstraint = z3.And(cv == tv, constraint)
-        #             solver.add(myconstraint)
-        #             stat = solver.check()
-        #             solver.reset()
-        #             # print(myconstraint)
-        #             if stat == z3.sat:
-        #                 for f in self.db.constraints_d[constraint].files:
-        #                     files.add(f)
-        #             else:
-        #                 print('UNSAT', myconstraint)
-
-        # assert tv not in influential_d[cv]
-        # influential_d[cv][tv] = files
-
-    def get_stats(self):
-        config_vars = set()
-        n_true = 0
-        n_conj = 0
-        n_disj = 0
-        n_mixed = 0
-
-        longest_conj = 0
-        longest_disj = 0
-        longest_mixed = 0
-        longest_total = 0
-        total_len = 0
-        for c_info in db.constraints_d.values():
-            for cv in c_info.config_vars:
-                config_vars.add(cv)
-
-            len_ = len(c_info.config_vars)
-            total_len += len_
-            if len_ > longest_total:
-                longest_total = len_
-
-            if c_info.typ == ConstraintInfo.TRUE:
-                n_true += 1
-            elif c_info.typ == ConstraintInfo.CONJ:
-                n_conj += 1
-                if len_ > longest_conj:
-                    longest_conj = len_
-            elif c_info.typ == ConstraintInfo.DISJ:
-                n_disj += 1
-                if len_ > longest_disj:
-                    longest_disj = len_
-            else:
-                n_mixed += 1
-                if len_ > longest_mixed:
-                    longest_mixed = len_
-
-        avg_len = total_len / len(db.constraints_d)
-
-        mlog.info("{} config vars, {} constraints, {} compile units".format(
-            len(config_vars), len(db.constraints_d), len(db.files_d)))
-        mlog.info("true {}, conj {}, disj {}, mixed {}".format(
-            n_true, n_conj, n_disj, n_mixed))
-        mlog.info("cond lens: top {} (conj {}, disj {}, mixed {}), avg {}".format(
-            longest_total, longest_conj, longest_disj, longest_mixed, avg_len))
-        mlog.info("# of files with no constraint: {}".format(
-            len(db.constraints_d[None].files)))
-        self.config_vars = config_vars
+        self.lens_covs_d = lens_covs_d
 
 
 if __name__ == '__main__':
@@ -278,10 +275,12 @@ if __name__ == '__main__':
 
     kmax_file = Path(args.inp)
 
-    db = DB.create_from_file(kmax_file)
-    analysis = Analysis(db)
-    analysis.get_stats()
-    analysis.get_influential()
+    kmax_db = DB.create_from_file(kmax_file)
+    analysis = Analysis(kmax_db)
+    analysis.doit()
+
+    # analysis.get_stats()
+    # analysis.get_influential_configs()
     # formulas = {unit: get_conditions(
     #     kmax_formulas, unit) for unit in kmax_formulas}
     # path_prefix = args.pathprefix
