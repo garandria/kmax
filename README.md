@@ -392,8 +392,8 @@ tree.
 
 To get the formulas for compilation units defined in the Kbuild files,
 we first need a list of all the top-level source directories for each
-architecture.  The script uses a hacky Makefile to do this.  Then
-calls kmaxall with all of the top-level directories.  This is a memory
+architecture.  The script uses a hacky Makefile to do this.  Then call
+kmaxall with all of the top-level directories.  This is a memory
 intensive operation.  The next script calls kclause on each of the
 architectures, as named in the arch/ directory.
 
