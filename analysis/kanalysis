@@ -15,7 +15,8 @@ mlog = CM.getLogger(__name__, settings.logger_level)
 
 
 class Z3:
-
+    zTrue = z3.BoolVal(True)
+    zFalse = z3.BoolVal(False)
     CONNECTIVE_OPS = [z3.Z3_OP_NOT, z3. Z3_OP_AND,
                       z3. Z3_OP_OR, z3.Z3_OP_IMPLIES,
                       z3.Z3_OP_IFF, z3.Z3_OP_ITE, z3.Z3_OP_XOR]
@@ -128,6 +129,11 @@ class DB:
                 assert len(constraint) == 1, constraint
                 constraint = Z3.simplify(constraint[0])
 
+            assert (constraint is None or
+                    (z3.is_expr(constraint) and not bool(constraint == Z3.zFalse))), constraint
+            if bool(constraint == Z3.zTrue):
+                constraint = None
+
             db.files_d[compile_file] = constraint
             if constraint not in db.constraints_d:
                 c_info = ConstraintInfo()
@@ -173,10 +179,10 @@ class Analysis:
             typ, self.largest_lens_d[typ]) for typ in sorted(self.largest_lens_d)))
         mlog.info("constraint lens: avg {}, {}".format(self.avg_len, ss))
 
-        self.get_len_cov()
-        ss = (', '.join("{} {}".format(
-            k, len(self.lens_covs_d[k])) for k in sorted(self.lens_covs_d)))
-        mlog.info("constraint lens => # files: {}".format(ss))
+        self.get_len_cov(maxk=10)
+        ss = (', '.join("{} {} {}".format(
+            k, self.lens_d[k], len(self.lens_covs_d[k])) for k in sorted(self.lens_covs_d)))
+        mlog.info("constraint (len, count, cov): {}".format(ss))
         # TODO:  output/mlog.debug the names of the files
 
     def compute_config_vars(self):
@@ -227,18 +233,27 @@ class Analysis:
         print('\n'.join("{}: {}".format(
             v, len(influential_d[v])) for v in influential_vars[:10]))
 
-    def get_len_cov(self):
+    def get_len_cov(self, maxk=None):
         """
         Return a mapping from condition len to # of files covered by
         conditions of that length
         """
-        lens_covs_d = {}
-        for c_info in self.db.constraints_d.values():
+        lens_d = {}   # how many constraints of this size
+        lens_covs_d = {}  # how much cov of constraints of this size
+        for constraint, c_info in self.db.constraints_d.items():
             k = len(c_info.config_vars)
+
+            if maxk and k >= maxk:
+                k = maxk
+            if k == 0:
+                print(constraint, c_info.typ)
             if k not in lens_covs_d:
+                lens_d[k] = 0
                 lens_covs_d[k] = set()
+            lens_d[k] += 1
             lens_covs_d[k] = lens_covs_d[k].union(c_info.files)
 
+        self.lens_d = lens_d
         self.lens_covs_d = lens_covs_d
 
 
