@@ -177,7 +177,7 @@ class Klocalizer:
     Arguments:
     path -- kbuild path.
     """
-    command = ['kmax', '-z', ('-Dsrctree=./'), ('-Dsrc=%s' % (os.path.dirname(path))), path]
+    command = ['kmax', '-log_level=0', '-z', ('-Dsrctree=./'), ('-Dsrc=%s' % (os.path.dirname(path))), path]
     self.__logger.info("Running kmax: %s\n" % (" ".join(command)))
     output = subprocess.check_output(command, stderr=DEVNULL, cwd=self.__ksrc) # todo: save error output to a log
     formulas = pickle.loads(output)
@@ -559,15 +559,14 @@ class Klocalizer:
     EXCLUDE=0
     INCLUDE=1
 
-  def __add_compilation_unit(self, unit: str, inclusion_prop: __CompUnitInclusionProp):
+  def get_kmax_constraints(self, unit: str):
     """Given a compilation unit, fetch the inclusion constraints using kmax,
-    and add these constraints to kmax constraints based on inclusion property.
+    and return.
 
     May raise NoFormulaFoundForCompilationUnit or MultipleCompilationUnitsMatch exception.
 
     Arguments:
     unit -- compilation unit.
-    inclusion_prop -- Inclusion property, i.e., include or exclude the unit.
     """
     #
     # Format the unit name
@@ -599,9 +598,21 @@ class Klocalizer:
         unit = kbuild_path
     
     #
-    # Add the constraints to the kmax constraints accumulator
+    # Get the kmax constraints
     #
-    kmax_constraints_for_unit = get_kmax_constraints(self.__kmax_formulas, unit) # TODO: this one is not quiet
+    return get_kmax_constraints(self.__kmax_formulas, unit) # TODO: this one is not quiet
+
+  def __add_compilation_unit(self, unit: str, inclusion_prop: __CompUnitInclusionProp):
+    """Given a compilation unit, fetch the inclusion constraints using kmax,
+    and add these constraints to kmax constraints based on inclusion property.
+
+    May raise NoFormulaFoundForCompilationUnit or MultipleCompilationUnitsMatch exception.
+
+    Arguments:
+    unit -- compilation unit.
+    inclusion_prop -- Inclusion property, i.e., include or exclude the unit.
+    """
+    kmax_constraints_for_unit = self.get_kmax_constraints(unit)
 
     if inclusion_prop == Klocalizer.__CompUnitInclusionProp.INCLUDE:
       self.__include_compilation_units.append(unit)
