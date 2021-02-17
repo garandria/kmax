@@ -104,7 +104,7 @@ def get_all_sat_exprs(formula: z3.z3.BoolRef):
 
   return sat_exprs
 
-def get_unmet_constraints(arch, selectors=None, selectees=None, syntactical_optimization=True, attach_analysis_info=False):
+def get_unmet_constraints(arch, selectors=None, selectees=None, syntactical_optimization=True, attach_analysis_info=False, print_only_pieces=False):
   """Get unmet constraints mapping to optimized constraints.
 
   For a Kconfig select construct (selectee, selector, visibility), the optimized
@@ -216,6 +216,13 @@ def get_unmet_constraints(arch, selectors=None, selectees=None, syntactical_opti
         # (selector) and (dependency_selector) and (!dependency_selectee) and (selectee's visibility on being selected by selector)
         # selector only selects if its dependencies are satisfied. This is why we include dependency_selector in the constraints.
         z3_unmet_dep_constraints = z3.And( z3_selector, z3_selector_dir_dep, z3.Not(z3_selectee_dir_dep), z3_visibility )
+        if print_only_pieces:
+          print("selector= ", z3_selector)
+          print("selector_dir_dep= ", z3_selector_dir_dep)
+          print("selectee_dir_dep= ", z3_selectee_dir_dep)
+          print("visibility= ", z3_visibility)
+          exit()
+
 
         # special case: syntactical_optimization
         if syntactical_optimization and not selectee_has_dir_dep:
@@ -316,8 +323,12 @@ if __name__ == '__main__':
   argparser.add_argument('--allow-config-broken',
                         action="store_true",
                         help="""Allow CONFIG_BROKEN dependencies.  """)
+  argparser.add_argument('--debug-print-only-pieces',
+                        action="store_true",
+                        help="""A debug flag: print only pieces that goes into the selectee,selector pair and terminate the program.  """)
   
   args = argparser.parse_args()
+  print_only_pieces = args.debug_print_only_pieces
   arch_name = args.arch
   selectors = args.selectors
   selectees = args.selectees
@@ -395,7 +406,7 @@ if __name__ == '__main__':
   #
   info("Identifying the select constructs.")
   t_start_identifyconstructs = __get_time_refpoint()
-  unmet_constraints = get_unmet_constraints(arch, selectors=selectors, selectees=selectees, syntactical_optimization=syntactical_optimization, attach_analysis_info=True)
+  unmet_constraints = get_unmet_constraints(arch, selectors=selectors, selectees=selectees, syntactical_optimization=syntactical_optimization, attach_analysis_info=True, print_only_pieces=print_only_pieces)
 
   # keep track of the counts. in case some step is disabled, this mapping will let the next step know how many alarms there are to check
   counts = {
