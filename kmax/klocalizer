@@ -53,7 +53,7 @@ def klocalizerCLI():
                          help="""A text file containing constraints in SMTLib format.""")
   argparser.add_argument('-a',
                          '--arch',
-                         action="extend",
+                         action="append",
                          default=[],
                          nargs="+",
                          help="""Specify each architecture to try.  These archs will be tried first in order if --all is also given.  Defaults to all.  Available architectures: %s""" % (", ".join(Arch.ARCHS)))
@@ -169,6 +169,8 @@ def klocalizerCLI():
   klocalizer.set_logger(logger)
 
   klocalizer.set_linux_krsc(linux_ksrc)
+
+  if archs_arg: archs_arg = [item for sublist in archs_arg for item in sublist]
 
   # set default value for formulas if not specified
   if not formulas:

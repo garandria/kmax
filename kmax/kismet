@@ -172,8 +172,9 @@ def get_unmet_constraints(arch, selectors=None, selectees=None, syntactical_opti
   #
   # If specified, limit the constructs to given selectees and selectors
   #
-  if selectees: selectees = set(selectees)
-  if selectors: selectors = set(selectors)
+  flatten_list = lambda x : [item for sublist in x for item in sublist]
+  if selectees: selectees = set(flatten_list(selectees))
+  if selectors: selectors = set(flatten_list(selectors))
 
   if selectees or selectors:
     selects_new = {}
@@ -242,12 +243,12 @@ if __name__ == '__main__':
                         required=True,
                         help="""Specify architecture to analyze.  Available architectures: %s""" % (", ".join(Arch.ARCHS)))
   argparser.add_argument('--selectors',
-                        action="extend",
+                        action="append",
                         default=[],
                         nargs="+",
                         help="""List of selector config symbols to analyze.  If not specified, any selector symbol will be included in the analysis.""")
   argparser.add_argument('--selectees',
-                        action="extend",
+                        action="append",
                         default=[],
                         nargs="+",
                         help="""List of selectee config symbols to analyze.  If not specified, any selectee symbol will be included in the analysis.""")

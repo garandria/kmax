@@ -15,6 +15,6 @@ ARCHS=("x86_64" "i386" "arm" "arm64" "sparc64" "sparc" "powerpc" "mips" "alpha" 
 
 for arch in ${ARCHS[@]}; do
   echo "running kismet on ${arch}"
-  /usr/bin/time -o script_time_${arch}.txt kismet --linux-ksrc="linux-5.4.4/" -a=${arch} --test-cases-dir="test_cases_${arch}/" > script_log_${arch}.txt 2>&1
+  /usr/bin/time -o script_time_${arch}.txt kismet --linux-ksrc="linux-5.4.4/" -a=${arch} --test-cases-dir="test_cases_${arch}/" > script_log_${arch}.txt 2>&1 &
   echo "kismet done running on ${arch}"
 done
